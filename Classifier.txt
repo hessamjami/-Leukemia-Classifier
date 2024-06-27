@@ -1,0 +1,69 @@
+# Importing Modules
+import os
+import pandas as pd
+from fastai.vision.all import *
+from fastai.vision import models
+from fastai.metrics import error_rate, accuracy
+
+import warnings
+warnings.filterwarnings("ignore")
+set_seed(42)
+
+# Data Preprocessing (Reading Dataset and Making DataFrames)
+# Define data directory
+data_dir = '../input/leukemia/Original'
+
+# Generate data paths with labels
+filepaths = []
+labels = []
+
+folds = os.listdir(data_dir)
+for fold in folds:
+    foldpath = os.path.join(data_dir, fold)
+    filelist = os.listdir(foldpath)
+    for file in filelist:
+        fpath = os.path.join(foldpath, file)
+        filepaths.append(fpath)
+        labels.append(fold)
+
+# Concatenate data paths with labels into one dataframe
+Fseries = pd.Series(filepaths, name='filepaths')
+Lseries = pd.Series(labels, name='labels')
+df = pd.concat([Fseries, Lseries], axis=1)
+
+# Display the dataframe to check if paths and labels are correct
+print(df.head())
+
+# Data augmentation and image data loaders
+dls = ImageDataLoaders.from_df(df,
+                                fn_col='filepaths',  # filepaths
+                                label_col='labels',  # labels
+                                valid_pct=0.2,
+                                folder='',
+                                item_tfms=Resize(224),
+                                batch_tfms=[*aug_transforms(size=224), Normalize.from_stats(*imagenet_stats)])
+
+# Show a batch of images
+dls.show_batch(max_n=16)
+
+# Creating Model for Classification
+# Model training
+learn = cnn_learner(dls, models.resnet50, metrics=[accuracy, error_rate]).to_fp16()
+
+# Find an optimal learning rate
+learn.lr_find()
+
+# Fine-tune the model using the one-cycle policy
+learn.fit_one_cycle(20, lr_max=slice(1e-2, 1e-1))
+
+# Show the results of the training
+learn.show_results()
+
+# Save the trained model
+learn.export('/kaggle/working/leukemia_model.pkl')
+
+# Model Interpretation
+interp = ClassificationInterpretation.from_learner(learn)
+interp.plot_top_losses(12, figsize=(12, 12))
+interp.plot_confusion_matrix(figsize=(6, 6), dpi=60)
+interp.most_confused(min_val=2)
